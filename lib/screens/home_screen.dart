@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:desktop_android_pdf_syncer/services/auth_service.dart';
 import 'package:desktop_android_pdf_syncer/services/storage_service.dart';
+import 'package:desktop_android_pdf_syncer/screens/pdf_viewer_screen.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 
 class HomeScreen extends StatefulWidget {
@@ -234,9 +235,24 @@ class _HomeScreenState extends State<HomeScreen> {
       return IconButton(
         icon: const Icon(Icons.visibility, color: Colors.blue),
         tooltip: 'View Native Document',
-        onPressed: () {
-          // Hook handler for Phase 4 rendering pipeline
-          debugPrint('Route handler payload destination trigger: ${file.name}');
+        onPressed: () async {
+          final String? name = file.name;
+          if (name == null) return;
+          
+          // Fetch the local file pointer securely from app storage directories
+          final File cachedFile = await _storageService.getCachedFile(name);
+          
+          if (!mounted) return;
+          
+          // Push to the viewer layout
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => PdfViewerScreen(
+                fileName: name,
+                localFile: cachedFile,
+              ),
+            ),
+          );
         },
       );
     }
