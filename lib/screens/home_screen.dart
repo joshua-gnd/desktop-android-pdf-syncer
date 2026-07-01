@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:desktop_android_pdf_syncer/services/auth_service.dart';
 import 'package:desktop_android_pdf_syncer/services/storage_service.dart';
+import 'package:googleapis/drive/v3.dart' as drive;
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -11,64 +12,98 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _fileIdController = TextEditingController();
-  bool _isDownloading = false;
-  String _downloadStatus = '';
+  final StorageService _storageService = StorageService();
+  
+  List<drive.File> _remoteFiles = [];
+  Map<String, bool> _cacheRegistry = {}; // Tracks: {fileName: true/false}
+  final Map<String, bool> _syncingTracker = {}; // Tracks downing states per file ID
+  
+  bool _isLoadingList = false;
+  String _errorMessage = '';
 
   @override
-  void dispose() {
-    _fileIdController.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _loadSyncDashboard();
   }
 
-  void _triggerDownload() async {
-    final authService = AuthService();
-    final api = authService.driveApi;
-    final fileId = _fileIdController.text.trim();
-
+  /// Master coordinator to synchronize UI view state with remote and local files
+  Future<void> _loadSyncDashboard() async {
+    final api = AuthService().driveApi;
     if (api == null) {
-      setState(() => _downloadStatus = 'Error: Drive API is not initialized.');
-      return;
-    }
-
-    if (fileId.isEmpty) {
-      setState(() => _downloadStatus = 'Please enter a valid Google Drive File ID.');
+      setState(() => _errorMessage = 'Authentication client uninitialized.');
       return;
     }
 
     setState(() {
-      _isDownloading = true;
-      _downloadStatus = 'Streaming bytes from cloud storage...';
+      _isLoadingList = true;
+      _errorMessage = '';
     });
 
-    // Hardcode a default name for manual verification testing
-    final File? cachedFile = await StorageService().downloadDriveFile(
+    // 1. Fetch remote changes from cloud discovery index
+    final files = await _storageService.fetchDrivePdfFiles(driveApi: api);
+    
+    // 2. Scan physical system disk parameters sequentially to verify local presence
+    final Map<String, bool> updatedCacheRegistry = {};
+    for (var file in files) {
+      if (file.name != null) {
+        final isCached = await _storageService.isFileCached(file.name!);
+        updatedCacheRegistry[file.name!] = isCached;
+      }
+    }
+
+    setState(() {
+      _remoteFiles = files;
+      _cacheRegistry = updatedCacheRegistry;
+      _isLoadingList = false;
+    });
+  }
+
+  /// Triggers stream sync on an individual remote file entry
+  Future<void> _syncFile(drive.File driveFile) async {
+    final api = AuthService().driveApi;
+    final fileId = driveFile.id;
+    final fileName = driveFile.name;
+
+    if (api == null || fileId == null || fileName == null) return;
+
+    setState(() => _syncingTracker[fileId] = true);
+
+    final File? localizedFile = await _storageService.downloadDriveFile(
       driveApi: api,
       fileId: fileId,
-      fileName: 'synced_document.pdf',
+      fileName: fileName,
     );
 
     setState(() {
-      _isDownloading = false;
-      if (cachedFile != null) {
-        _downloadStatus = 'Success! File saved physically at:\n${cachedFile.path}';
-      } else {
-        _downloadStatus = 'Download failed. Ensure the File ID matches and your app has access.';
+      _syncingTracker[fileId] = false;
+      if (localizedFile != null) {
+        _cacheRegistry[fileName] = true;
       }
     });
+
+    if (localizedFile != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Successfully cached: $fileName')),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final authService = AuthService();
     final user = authService.currentUser;
-    final apiReady = authService.driveApi != null;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Data Pipeline Dashboard'),
+        title: const Text('Workspace Discovery Sync'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh Library Index',
+            onPressed: _isLoadingList ? null : _loadSyncDashboard,
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Sign Out',
@@ -76,101 +111,140 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Welcome, ${user?.displayName ?? "User"}',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Authenticated as: ${user?.email ?? "Unknown"}',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: Colors.grey,
-                  ),
-            ),
-            const Divider(height: 40, thickness: 1),
-            
-            // Phase 2 Pipeline Status Indicator
-            Container(
-              padding: const EdgeInsets.all(16.0),
-              decoration: BoxDecoration(
-                color: apiReady 
-                    ? Colors.green.withValues(alpha: 0.1) 
-                    : Colors.red.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: apiReady ? Colors.green : Colors.red,
-                  width: 1.5,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Global profile info banner component
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Connected Workspace',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey),
                 ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    apiReady ? Icons.check_circle : Icons.error,
-                    color: apiReady ? Colors.green : Colors.red,
-                    size: 28,
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Text(
-                      apiReady 
-                          ? 'Drive API Client: Active & Authorized' 
-                          : 'Drive API Client: Missing Scope Token',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: apiReady ? Colors.green : Colors.red,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 32),
-            
-            // Step 4 Download Pipeline Test UI
-            Text(
-              'Test Download Engine Pipeline',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _fileIdController,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: 'Google Drive File ID',
-                hintText: 'Enter a file ID created/opened by this app',
-              ),
-              enabled: apiReady && !_isDownloading,
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.cloud_download),
-                label: const Text('Download and Cache File'),
-                onPressed: (apiReady && !_isDownloading) ? _triggerDownload : null,
-              ),
-            ),
-            const SizedBox(height: 20),
-            if (_downloadStatus.isNotEmpty)
-              Text(
-                _downloadStatus,
-                style: TextStyle(
-                  fontWeight: FontWeight.w500,
-                  color: _downloadStatus.startsWith('Success') ? Colors.green : Colors.black87,
+                Text(
+                  user?.email ?? 'Unknown Profile Account',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                 ),
-              ),
-          ],
-        ),
+              ],
+            ),
+          ),
+          const Divider(),
+          
+          // Main dynamic listing structure
+          Expanded(
+            child: _buildDashboardContent(),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildDashboardContent() {
+    if (_isLoadingList) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_errorMessage.isNotEmpty) {
+      return Center(child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Text(_errorMessage, style: const TextStyle(color: Colors.red)),
+      ));
+    }
+
+    if (_remoteFiles.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.cloud_off, size: 64, color: Colors.grey),
+              const SizedBox(height: 16),
+              const Text(
+                'No Accessible PDFs Found',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Under the restricted "drive.file" scope, this app can only detect files it created itself or files you opened explicitly inside it.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('Scan Drive Again'),
+                onPressed: _loadSyncDashboard,
+              )
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      itemCount: _remoteFiles.length,
+      separatorBuilder: (context, index) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final file = _remoteFiles[index];
+        final id = file.id ?? '';
+        final name = file.name ?? 'Unnamed File';
+        
+        final isCached = _cacheRegistry[name] ?? false;
+        final isSyncing = _syncingTracker[id] ?? false;
+
+        return ListTile(
+          leading: Icon(
+            Icons.picture_as_pdf, 
+            color: isCached ? Colors.red : Colors.grey,
+            size: 36,
+          ),
+          title: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(
+            isCached ? 'Available offline (cached)' : 'Cloud Storage target only',
+            style: TextStyle(
+              color: isCached ? Colors.green : Colors.orange,
+              fontSize: 12,
+            ),
+          ),
+          trailing: _buildTrailingWidget(file, isCached, isSyncing),
+        );
+      },
+    );
+  }
+
+  Widget _buildTrailingWidget(drive.File file, bool isCached, bool isSyncing) {
+    if (isSyncing) {
+      return const SizedBox(
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(strokeWidth: 2.5),
+      );
+    }
+
+    if (isCached) {
+      return IconButton(
+        icon: const Icon(Icons.visibility, color: Colors.blue),
+        tooltip: 'View Native Document',
+        onPressed: () {
+          // Hook handler for Phase 4 rendering pipeline
+          debugPrint('Route handler payload destination trigger: ${file.name}');
+        },
+      );
+    }
+
+    return IconButton(
+      icon: const Icon(Icons.cloud_download, color: Colors.orange),
+      tooltip: 'Sync and Store File Locally',
+      onPressed: () => _syncFile(file),
     );
   }
 }

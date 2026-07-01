@@ -9,6 +9,33 @@ class StorageService {
   factory StorageService() => _instance;
   StorageService._internal();
 
+  /// Fetches a targeted list of PDF metadata items from Google Drive
+  /// limited to files your application can legally see under 'drive.file' scope.
+  Future<List<drive.File>> fetchDrivePdfFiles({required drive.DriveApi driveApi}) async {
+    try {
+      debugPrint('Executing remote discovery query on Google Drive...');
+      
+      // Target only PDF files, excluding trashed documents
+      final String mimeTypeQuery = "mimeType = 'application/pdf'";
+      final String nonTrashedQuery = "trashed = false";
+      final String completeQuery = "$mimeTypeQuery and $nonTrashedQuery";
+
+      final drive.FileList fileList = await driveApi.files.list(
+        q: completeQuery,
+        spaces: 'drive',
+        // Request only the critical UI optimization parameters we need
+        $fields: 'files(id, name, size, modifiedTime)', 
+      );
+
+      final List<drive.File> files = fileList.files ?? [];
+      debugPrint('Remote search returned ${files.length} valid items.');
+      return files;
+    } catch (e) {
+      debugPrint('Remote search failure: $e');
+      return [];
+    }
+  }
+  
   /// Gets the platform-specific safe documents directory path
   Future<String> get _localPath async {
     final directory = await getApplicationDocumentsDirectory();
