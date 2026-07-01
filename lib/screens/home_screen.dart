@@ -1,12 +1,65 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:desktop_android_pdf_syncer/services/auth_service.dart';
+import 'package:desktop_android_pdf_syncer/services/storage_service.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final _fileIdController = TextEditingController();
+  bool _isDownloading = false;
+  String _downloadStatus = '';
+
+  @override
+  void dispose() {
+    _fileIdController.dispose();
+    super.dispose();
+  }
+
+  void _triggerDownload() async {
+    final authService = AuthService();
+    final api = authService.driveApi;
+    final fileId = _fileIdController.text.trim();
+
+    if (api == null) {
+      setState(() => _downloadStatus = 'Error: Drive API is not initialized.');
+      return;
+    }
+
+    if (fileId.isEmpty) {
+      setState(() => _downloadStatus = 'Please enter a valid Google Drive File ID.');
+      return;
+    }
+
+    setState(() {
+      _isDownloading = true;
+      _downloadStatus = 'Streaming bytes from cloud storage...';
+    });
+
+    // Hardcode a default name for manual verification testing
+    final File? cachedFile = await StorageService().downloadDriveFile(
+      driveApi: api,
+      fileId: fileId,
+      fileName: 'synced_document.pdf',
+    );
+
+    setState(() {
+      _isDownloading = false;
+      if (cachedFile != null) {
+        _downloadStatus = 'Success! File saved physically at:\n${cachedFile.path}';
+      } else {
+        _downloadStatus = 'Download failed. Ensure the File ID matches and your app has access.';
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // 1. Reference your existing v7 global singleton state
     final authService = AuthService();
     final user = authService.currentUser;
     final apiReady = authService.driveApi != null;
@@ -16,22 +69,18 @@ class HomeScreen extends StatelessWidget {
         title: const Text('Data Pipeline Dashboard'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
-          // Sign Out Action Button
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Sign Out',
-            onPressed: () async {
-              await authService.signOut();
-            },
+            onPressed: () async => await authService.signOut(),
           ),
         ],
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // User Greeting Header
             Text(
               'Welcome, ${user?.displayName ?? "User"}',
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
@@ -45,19 +94,12 @@ class HomeScreen extends StatelessWidget {
                     color: Colors.grey,
                   ),
             ),
-            
             const Divider(height: 40, thickness: 1),
             
             // Phase 2 Pipeline Status Indicator
-            Text(
-              'Backend Pipeline Verification',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(16.0),
               decoration: BoxDecoration(
-                // Resolved deprecation warnings using modern .withValues syntax
                 color: apiReady 
                     ? Colors.green.withValues(alpha: 0.1) 
                     : Colors.red.withValues(alpha: 0.1),
@@ -76,48 +118,56 @@ class HomeScreen extends StatelessWidget {
                   ),
                   const SizedBox(width: 16),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          apiReady 
-                              ? 'Drive API Client: Active' 
-                              : 'Drive API Client: Error',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: apiReady ? Colors.green : Colors.red,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          apiReady
-                              ? 'Secure HTTP channel open. Ready to download files.'
-                              : 'Failed to authorize drive.file scope tokens.',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: apiReady ? Colors.green : Colors.red,
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      apiReady 
+                          ? 'Drive API Client: Active & Authorized' 
+                          : 'Drive API Client: Missing Scope Token',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: apiReady ? Colors.green : Colors.red,
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
-            
             const SizedBox(height: 32),
             
-            // Step 4 Placeholder Layout Area
-            const Center(
-              child: Text(
-                'Ready for Step 4: Remote File Query Processing.',
-                style: TextStyle(
-                  color: Colors.grey,
-                  fontStyle: FontStyle.italic,
-                ),
+            // Step 4 Download Pipeline Test UI
+            Text(
+              'Test Download Engine Pipeline',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _fileIdController,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Google Drive File ID',
+                hintText: 'Enter a file ID created/opened by this app',
+              ),
+              enabled: apiReady && !_isDownloading,
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.cloud_download),
+                label: const Text('Download and Cache File'),
+                onPressed: (apiReady && !_isDownloading) ? _triggerDownload : null,
               ),
             ),
+            const SizedBox(height: 20),
+            if (_downloadStatus.isNotEmpty)
+              Text(
+                _downloadStatus,
+                style: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  color: _downloadStatus.startsWith('Success') ? Colors.green : Colors.black87,
+                ),
+              ),
           ],
         ),
       ),
