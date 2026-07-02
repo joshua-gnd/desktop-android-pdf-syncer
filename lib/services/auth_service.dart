@@ -5,6 +5,7 @@ import 'package:googleapis_auth/googleapis_auth.dart' as auth;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 
 class AuthService extends ChangeNotifier {
+  // Revert back to the mandatory package instance singleton
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
 
   // Track the scopes required for Google Drive interaction
@@ -25,8 +26,10 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _initializeAndCheckSignIn() async {
     try {
-      // 1. Fire up the core plugin engine
-      await _googleSignIn.initialize();
+      // FIX: Pass the serverClientId directly inside the initialize method
+      await _googleSignIn.initialize(
+        serverClientId: 'YOUR_GOOGLE_CLOUD_WEB_CLIENT_://googleusercontent.com',
+      );
 
       // 2. Set up the stream listener to capture structural auth state updates
       _googleSignIn.authenticationEvents.listen((event) async {
