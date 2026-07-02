@@ -43,8 +43,8 @@ dependencies:
   googleapis_auth: ^1.6.0     
   extension_google_sign_in_as_googleapis_auth: ^3.0.0
   path_provider: ^2.1.3
-  syncfusion_flutter_pdfviewer: ^26.1.2 # For rendering the PDF and viewing annotations
-  syncfusion_flutter_pdf: ^26.1.2 # For modifying and saving PDF annotations
+  syncfusion_flutter_pdfviewer: ^31.1.19 # For rendering the PDF and viewing annotations
+  syncfusion_flutter_pdf: ^31.1.19 # For modifying and saving PDF annotations
 
 dev_dependencies:
   flutter_test:
