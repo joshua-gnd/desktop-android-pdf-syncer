@@ -43,3 +43,14 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Nested build directories
+**/build/
+
+# Local machine-specific config
+android/local.properties
+
+# Flutter/Xcode ephemeral generated files
+**/ephemeral/
+**/Flutter/Generated.xcconfig
+**/Flutter/flutter_export_environment.sh
